@@ -56,3 +56,9 @@ export const listingTagsApi = {
       method: "DELETE",
     }),
 };
+
+export const claimListing = (listingId: string, recipientOrganizationId: string) =>
+  apiRequest<PickupClaim>(`food-listings/${listingId}/claims`, {
+    method: "POST",
+    body: { recipientOrganizationId },
+  });

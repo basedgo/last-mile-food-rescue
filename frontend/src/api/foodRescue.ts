@@ -1,31 +1,57 @@
-import { foodListingsApi, listingTagsApi, organizationsApi } from "./endpoints";
-import type { FoodListingPayload } from "../types/api";
+import {
+  claimListing,
+  foodListingsApi,
+  listingTagsApi,
+  organizationsApi,
+  pickupClaimsApi,
+} from "./endpoints";
+import type { FoodListingPayload, Organization } from "../types/api";
 import type { Listing } from "../types/view";
 import {
   groupTagsByListingId,
+  latestClaimByListingId,
   mapFoodListingToViewListing,
 } from "../mappers/listings";
 
-export async function getListingsForUi(): Promise<Listing[]> {
-  const [foodListings, organizations, listingTags] = await Promise.all([
-    foodListingsApi.list(),
-    organizationsApi.list(),
-    listingTagsApi.list().catch((error: unknown) => {
-      console.warn("Unable to load listing tags; continuing without tags.", error);
-      return [];
-    }),
-  ]);
+export async function getListingsForUi(): Promise<{
+  listings: Listing[];
+  organizations: Organization[];
+}> {
+  // Fire all 4 requests at once instead of one after another.
+  const [foodListings, organizations, listingTags, pickupClaims] =
+    await Promise.all([
+      foodListingsApi.list(),
+      organizationsApi.list(),
+      listingTagsApi.list().catch((error: unknown) => {
+        console.warn("Unable to load listing tags; continuing without tags.", error);
+        return [];
+      }),
+      pickupClaimsApi.list(),
+    ]);
 
   const tagsByListingId = groupTagsByListingId(listingTags);
-  return foodListings.map((listing, index) =>
-    mapFoodListingToViewListing(listing, index, organizations, tagsByListingId),
+  const claimsByListingId = latestClaimByListingId(pickupClaims);
+  const listings = foodListings.map((listing, index) =>
+    mapFoodListingToViewListing(
+      listing,
+      index,
+      organizations,
+      tagsByListingId,
+      claimsByListingId,
+    ),
   );
+
+  return { listings, organizations };
 }
 
-export async function createFoodListingFromUi(title: string): Promise<Listing> {
+export async function createFoodListingFromUi(
+  title: string,
+  donor: Organization,
+): Promise<Listing> {
   const now = new Date();
   const endsAt = new Date(now.getTime() + 75 * 60 * 1000);
   const payload: FoodListingPayload = {
+    donorOrganizationId: donor.organizationId,
     title: title || "Fresh surplus pickup",
     category: "Prepared meals",
     description: "Posted from the frontend surplus food form.",
@@ -42,5 +68,28 @@ export async function createFoodListingFromUi(title: string): Promise<Listing> {
   };
 
   const createdListing = await foodListingsApi.create(payload);
-  return mapFoodListingToViewListing(createdListing, 0, [], new Map());
+  return mapFoodListingToViewListing(createdListing, 0, [donor], new Map(), new Map());
+}
+
+export async function claimListingFromUi(
+  listing: Listing,
+  recipient: Organization,
+): Promise<Listing> {
+  const claim = await claimListing(listing.id, recipient.organizationId);
+  // Return an updated copy of the listing instead of changing the original (React needs new objects to re-render).
+  return {
+    ...listing,
+    status: "CLAIMED",
+    claimedByOrganizationId: claim.recipientOrganizationId,
+    pickedUpBy: recipient.name,
+    datePickedUp: formatClaimDate(claim.claimedAt),
+  };
+}
+
+function formatClaimDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(value));
 }
