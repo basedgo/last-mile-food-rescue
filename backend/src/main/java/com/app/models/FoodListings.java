@@ -2,6 +2,7 @@ package com.app.models;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -26,6 +27,9 @@ public class FoodListings {
     @JoinColumn(name = "donor_organization_id", nullable = false)
     @JsonIgnore
     private Organization donorOrganization;
+    @Transient
+    @JsonIgnore
+    private UUID requestedDonorOrganizationId;
 
     @Column(name = "title", nullable = false, length = 180)
     private String title;
@@ -127,6 +131,16 @@ public class FoodListings {
 
     public void setDonorOrganization(Organization donorOrganization) {
         this.donorOrganization = donorOrganization;
+    }
+
+    @JsonProperty("donorOrganizationId")
+    public UUID getDonorOrganizationId() {
+        return donorOrganization != null ? donorOrganization.getOrganizationId() : requestedDonorOrganizationId;
+    }
+
+    @JsonProperty("donorOrganizationId")
+    public void setDonorOrganizationId(UUID donorOrganizationId) {
+        this.requestedDonorOrganizationId = donorOrganizationId;
     }
 
     public String getTitle() {

@@ -1,7 +1,10 @@
 package com.app.controllers;
 
+import com.app.dto.ClaimListingRequest;
 import com.app.models.FoodListings;
+import com.app.models.PickupClaims;
 import com.app.services.FoodListingsServices;
+import com.app.services.PickupClaimsServices;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,9 +17,17 @@ import java.util.UUID;
 public class FoodListingsController {
 
     private final FoodListingsServices services;
+    private final PickupClaimsServices pickupClaimsServices;
 
-    public FoodListingsController(FoodListingsServices services) {
+    public FoodListingsController(FoodListingsServices services, PickupClaimsServices pickupClaimsServices) {
         this.services = services;
+        this.pickupClaimsServices = pickupClaimsServices;
+    }
+
+    @PostMapping("/{listingId}/claims")
+    public ResponseEntity<PickupClaims> claim(@PathVariable UUID listingId, @RequestBody ClaimListingRequest request) {
+        PickupClaims claim = pickupClaimsServices.claimListing(listingId, request.recipientOrganizationId());
+        return ResponseEntity.created(URI.create("/api/pickup-claims/" + claim.getClaimId())).body(claim);
     }
 
     @GetMapping
