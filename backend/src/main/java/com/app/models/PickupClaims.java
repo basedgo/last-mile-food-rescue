@@ -1,6 +1,7 @@
 package com.app.models;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -78,6 +79,16 @@ public class PickupClaims {
 
     public void setClaimId(UUID claimId) {
         this.claimId = claimId;
+    }
+    
+    @JsonProperty("listingId")
+    public UUID getListingId() {
+        return listing != null ? listing.getListingId() : null;
+    }
+
+    @JsonProperty("recipientOrganizationId")
+    public UUID getRecipientOrganizationId() {
+        return recipientOrganization != null ? recipientOrganization.getOrganizationId() : null;
     }
 
     public FoodListings getListing() {
