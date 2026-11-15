@@ -1,4 +1,4 @@
-import type { ListingStatus } from './api'
+import type { ClaimStatus, ListingStatus } from './api'
 
 export type Listing = {
   id: string
@@ -16,4 +16,14 @@ export type Listing = {
   claimedByOrganizationId: string | null
   pickedUpBy: string
   datePickedUp: string
+}
+
+export type Delivery = {
+  claimId: string
+  listingTitle: string
+  portions: string
+  restaurant: string
+  shelter: string
+  status: ClaimStatus
+  volunteerUserId: string | null
 }

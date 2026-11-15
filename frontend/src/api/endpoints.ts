@@ -62,3 +62,17 @@ export const claimListing = (listingId: string, recipientOrganizationId: string)
     method: "POST",
     body: { recipientOrganizationId },
   });
+
+
+// Volunteer delivery actions: accept -> pickup -> deliver.
+export type VolunteerAction = "accept" | "pickup" | "deliver";
+
+export const updateDelivery = (
+  claimId: string,
+  action: VolunteerAction,
+  volunteerUserId: string,
+) =>
+  apiRequest<PickupClaim>(`pickup-claims/${claimId}/${action}`, {
+    method: "POST",
+    body: { volunteerUserId },
+  });

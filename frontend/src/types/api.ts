@@ -82,6 +82,7 @@ export type PickupClaim = {
   claimId: UUID
   listingId: UUID
   recipientOrganizationId: UUID
+  volunteerUserId?: UUID | null
   status: ClaimStatus
   claimedAt: ISODateTime
   pickedUpAt?: ISODateTime | null

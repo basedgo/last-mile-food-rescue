@@ -1,11 +1,19 @@
 import {
+  appUsersApi,
   claimListing,
   foodListingsApi,
   listingTagsApi,
   organizationsApi,
   pickupClaimsApi,
 } from "./endpoints";
-import type { FoodListingPayload, Organization } from "../types/api";
+
+import type {
+  AppUser,
+  FoodListingPayload,
+  Organization,
+  PickupClaim,
+} from "../types/api";
+
 import type { Listing } from "../types/view";
 import {
   groupTagsByListingId,
@@ -16,9 +24,10 @@ import {
 export async function getListingsForUi(): Promise<{
   listings: Listing[];
   organizations: Organization[];
+  claims: PickupClaim[];
+  volunteers: AppUser[];
 }> {
-  // Fire all 4 requests at once instead of one after another.
-  const [foodListings, organizations, listingTags, pickupClaims] =
+  const [foodListings, organizations, listingTags, pickupClaims, appUsers] =
     await Promise.all([
       foodListingsApi.list(),
       organizationsApi.list(),
@@ -27,6 +36,7 @@ export async function getListingsForUi(): Promise<{
         return [];
       }),
       pickupClaimsApi.list(),
+      appUsersApi.list(),
     ]);
 
   const tagsByListingId = groupTagsByListingId(listingTags);
@@ -41,7 +51,9 @@ export async function getListingsForUi(): Promise<{
     ),
   );
 
-  return { listings, organizations };
+  const volunteers = appUsers.filter((user) => user.role === "VOLUNTEER");
+
+  return { listings, organizations, claims: pickupClaims, volunteers };
 }
 
 export async function createFoodListingFromUi(
@@ -74,16 +86,17 @@ export async function createFoodListingFromUi(
 export async function claimListingFromUi(
   listing: Listing,
   recipient: Organization,
-): Promise<Listing> {
+): Promise<{ listing: Listing; claim: PickupClaim }> {
   const claim = await claimListing(listing.id, recipient.organizationId);
   // Return an updated copy of the listing instead of changing the original (React needs new objects to re-render).
-  return {
+  const claimedListing: Listing = {
     ...listing,
     status: "CLAIMED",
     claimedByOrganizationId: claim.recipientOrganizationId,
     pickedUpBy: recipient.name,
     datePickedUp: formatClaimDate(claim.claimedAt),
   };
+  return { listing: claimedListing, claim };
 }
 
 function formatClaimDate(value: string) {
