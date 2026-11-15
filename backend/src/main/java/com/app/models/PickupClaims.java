@@ -91,6 +91,12 @@ public class PickupClaims {
         return recipientOrganization != null ? recipientOrganization.getOrganizationId() : null;
     }
 
+
+    @JsonProperty("volunteerUserId")
+    public UUID getVolunteerUserId() {
+        return volunteerUser != null ? volunteerUser.getUserId() : null;
+    }
+
     public FoodListings getListing() {
         return listing;
     }

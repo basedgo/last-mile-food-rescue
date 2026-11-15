@@ -1,5 +1,6 @@
 package com.app.controllers;
 
+import com.app.dto.VolunteerActionRequest;
 import com.app.models.PickupClaims;
 import com.app.services.PickupClaimsServices;
 import org.springframework.http.ResponseEntity;
@@ -29,6 +30,21 @@ public class PickupClaimsController {
         return services.findById(claimId)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    @PostMapping("/{claimId}/accept")
+    public PickupClaims accept(@PathVariable UUID claimId, @RequestBody VolunteerActionRequest request) {
+        return services.acceptDelivery(claimId, request.volunteerUserId());
+    }
+
+    @PostMapping("/{claimId}/pickup")
+    public PickupClaims pickup(@PathVariable UUID claimId, @RequestBody VolunteerActionRequest request) {
+        return services.markPickedUp(claimId, request.volunteerUserId());
+    }
+
+    @PostMapping("/{claimId}/deliver")
+    public PickupClaims deliver(@PathVariable UUID claimId, @RequestBody VolunteerActionRequest request) {
+        return services.markDelivered(claimId, request.volunteerUserId());
     }
 
     @PostMapping
