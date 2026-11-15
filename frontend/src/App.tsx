@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, FormEvent } from "react";
+import type { CSSProperties, FormEvent, ReactNode } from "react";
 import {
   claimListingFromUi,
   createFoodListingFromUi,
   getListingsForUi,
 } from "./api/foodRescue";
+import { updateDelivery, type VolunteerAction } from "./api/endpoints";
 import { ApiError } from "./api/http";
-import type { Organization } from "./types/api";
-import type { Listing } from "./types/view";import "./App.css";
+import { mapClaimsToDeliveries } from "./mappers/deliveries";
+import type { AppUser, Organization, PickupClaim } from "./types/api";
+import type { Delivery, Listing } from "./types/view";import "./App.css";
 
-type Role = "customer" | "company";
+type Role = "customer" | "company" | "volunteer";
 type CustomerView = "listings" | "history" | "profile" | "inbox";
 type CompanyView = "dashboard" | "post" | "listings" | "profile" | "inbox";
 type Filter = "All" | "Meals" | "Bakery" | "Produce" | "Distance";
@@ -84,6 +86,12 @@ function App() {
   const [actingDonorId, setActingDonorId] = useState("");
   const [claimingListingId, setClaimingListingId] = useState<string | null>(null);
   const [claimError, setClaimError] = useState("");
+  // Volunteer role
+  const [claims, setClaims] = useState<PickupClaim[]>([]);
+  const [volunteers, setVolunteers] = useState<AppUser[]>([]);
+  const [actingVolunteerId, setActingVolunteerId] = useState("");
+  const [updatingClaimId, setUpdatingClaimId] = useState<string | null>(null);
+  const [deliveryError, setDeliveryError] = useState("");
 
   const recipientOrganizations = organizations.filter(
     (organization) => organization.organizationType === "RECIPIENT",
@@ -98,18 +106,27 @@ function App() {
     (organization) => organization.organizationId === actingDonorId,
   );
 
-  const activeView = role === "customer" ? customerView : companyView;
+  const activeView =
+    role === "customer" ? customerView : role === "company" ? companyView : "deliveries";
+  const deliveries = mapClaimsToDeliveries(claims, companyListings, organizations);
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadListings() {
       try {
-        const { listings: databaseListings, organizations: databaseOrganizations } =
-          await getListingsForUi();
+        const {
+          listings: databaseListings,
+          organizations: databaseOrganizations,
+          claims: databaseClaims,
+          volunteers: databaseVolunteers,
+        } = await getListingsForUi();
         if (isMounted) {
           setApiStatus("connected");
           setOrganizations(databaseOrganizations);
+          setClaims(databaseClaims);
+          setVolunteers(databaseVolunteers);
+          setActingVolunteerId(databaseVolunteers[0]?.userId ?? "");
           // Default the dropdowns to the first shelter and first restaurant.
           setActingRecipientId(
             databaseOrganizations.find((o) => o.organizationType === "RECIPIENT")
@@ -227,7 +244,11 @@ function App() {
     setClaimError("");
     setClaimingListingId(listing.id);
     try {
-      const claimedListing = await claimListingFromUi(listing, actingRecipient);
+      const { listing: claimedListing, claim } = await claimListingFromUi(
+        listing,
+        actingRecipient,
+      );
+      setClaims((currentClaims) => [claim, ...currentClaims]);
       setCompanyListings((currentListings) =>
         currentListings.map((current) =>
           current.id === claimedListing.id ? claimedListing : current,
@@ -239,6 +260,35 @@ function App() {
       setClaimError(getErrorMessage(error, "Could not claim this listing."));
     } finally {
       setClaimingListingId(null);
+    }
+  }
+
+  async function handleDeliveryAction(delivery: Delivery, action: VolunteerAction) {
+    setDeliveryError("");
+    setUpdatingClaimId(delivery.claimId);
+    try {
+      const updatedClaim = await updateDelivery(delivery.claimId, action, actingVolunteerId);
+      // Replace the old claim with the updated one from the server.
+      setClaims((currentClaims) =>
+        currentClaims.map((claim) =>
+          claim.claimId === updatedClaim.claimId ? updatedClaim : claim,
+        ),
+      );
+      // Picking up the food also changes the listing's status on the server.
+      if (action === "pickup") {
+        setCompanyListings((currentListings) =>
+          currentListings.map((listing) =>
+            listing.id === updatedClaim.listingId
+              ? { ...listing, status: "PICKED_UP" }
+              : listing,
+          ),
+        );
+      }
+    } catch (error) {
+      console.error("Unable to update delivery.", error);
+      setDeliveryError(getErrorMessage(error, "Could not update this delivery."));
+    } finally {
+      setUpdatingClaimId(null);
     }
   }
 
@@ -259,7 +309,9 @@ function App() {
         </div>
 
         <nav className="main-tabs" aria-label="Primary navigation">
-          {role === "customer" ? (
+          {role === "volunteer" ? (
+            <button className="active">Deliveries</button>
+          ) : role === "customer" ? (
             <>
               <button
                 className={customerView === "listings" ? "active" : ""}
@@ -339,28 +391,49 @@ function App() {
           >
             Company
           </button>
+          <button
+            className={
+              role === "volunteer" ? "role-toggle active" : "role-toggle"
+            }
+            onClick={() => switchRole("volunteer")}
+          >
+            Volunteer
+          </button>
           <label className="acting-as">
             <span>Acting as</span>
-            <select
-              value={role === "company" ? actingDonorId : actingRecipientId}
-              onChange={(event) =>
-                role === "company"
-                  ? setActingDonorId(event.target.value)
-                  : setActingRecipientId(event.target.value)
-              }
-            >
-              {(role === "company"
-                ? donorOrganizations
-                : recipientOrganizations
-              ).map((organization) => (
-                <option
-                  key={organization.organizationId}
-                  value={organization.organizationId}
-                >
-                  {organization.name}
-                </option>
-              ))}
-            </select>
+            {role === "volunteer" ? (
+              <select
+                value={actingVolunteerId}
+                onChange={(event) => setActingVolunteerId(event.target.value)}
+              >
+                {volunteers.map((volunteer) => (
+                  <option key={volunteer.userId} value={volunteer.userId}>
+                    {volunteer.fullName}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <select
+                value={role === "company" ? actingDonorId : actingRecipientId}
+                onChange={(event) =>
+                  role === "company"
+                    ? setActingDonorId(event.target.value)
+                    : setActingRecipientId(event.target.value)
+                }
+              >
+                {(role === "company"
+                  ? donorOrganizations
+                  : recipientOrganizations
+                ).map((organization) => (
+                  <option
+                    key={organization.organizationId}
+                    value={organization.organizationId}
+                  >
+                    {organization.name}
+                  </option>
+                ))}
+              </select>
+            )}
           </label>
         </div>
       </header>
@@ -413,6 +486,16 @@ function App() {
             ))}
           </div>
         </section>
+      )}
+
+      {role === "volunteer" && (
+        <DeliveriesView
+          deliveries={deliveries}
+          volunteerId={actingVolunteerId}
+          updatingClaimId={updatingClaimId}
+          error={deliveryError}
+          onAction={handleDeliveryAction}
+        />
       )}
 
       {role === "customer" && activeView === "listings" && (
@@ -1212,7 +1295,119 @@ function HistoryView({
   );
 }
 
-function formatStatus(status: Listing["status"]) {
+function DeliveriesView({
+  deliveries,
+  volunteerId,
+  updatingClaimId,
+  error,
+  onAction,
+}: {
+  deliveries: Delivery[];
+  volunteerId: string;
+  updatingClaimId: string | null;
+  error: string;
+  onAction: (delivery: Delivery, action: VolunteerAction) => void;
+}) {
+  // Claimed by a shelter but no driver yet.
+  const openDeliveries = deliveries.filter(
+    (delivery) => delivery.status === "CLAIMED" && !delivery.volunteerUserId,
+  );
+  // Assigned to the volunteer you're acting as.
+  const myDeliveries = deliveries.filter(
+    (delivery) => delivery.volunteerUserId === volunteerId,
+  );
+
+  return (
+    <main className="dashboard-layout">
+      {error && <p className="claim-error">{error}</p>}
+      <DeliveryTable
+        eyebrow="Needs a driver"
+        title="Open deliveries"
+        emptyText="No open deliveries right now. When a shelter claims food, it shows up here."
+        deliveries={openDeliveries}
+        updatingClaimId={updatingClaimId}
+        renderAction={(delivery) => (
+          <button className="claim-button" onClick={() => onAction(delivery, "accept")}>
+            Accept
+          </button>
+        )}
+      />
+      <DeliveryTable
+        eyebrow="Assigned to you"
+        title="My deliveries"
+        emptyText="You haven't accepted any deliveries yet."
+        deliveries={myDeliveries}
+        updatingClaimId={updatingClaimId}
+        renderAction={(delivery) =>
+          delivery.status === "CLAIMED" ? (
+            <button className="claim-button" onClick={() => onAction(delivery, "pickup")}>
+              Mark picked up
+            </button>
+          ) : delivery.status === "IN_TRANSIT" ? (
+            <button className="claim-button" onClick={() => onAction(delivery, "deliver")}>
+              Mark delivered
+            </button>
+          ) : (
+            <span>{formatStatus(delivery.status)}</span>
+          )
+        }
+      />
+    </main>
+  );
+}
+
+function DeliveryTable({
+  eyebrow,
+  title,
+  emptyText,
+  deliveries,
+  updatingClaimId,
+  renderAction,
+}: {
+  eyebrow: string;
+  title: string;
+  emptyText: string;
+  deliveries: Delivery[];
+  updatingClaimId: string | null;
+  renderAction: (delivery: Delivery) => ReactNode;
+}) {
+  return (
+    <section className="table-card full">
+      <div className="section-title">
+        <span>{eyebrow}</span>
+        <h1>{title}</h1>
+      </div>
+      {deliveries.length === 0 ? (
+        <div className="empty-state">{emptyText}</div>
+      ) : (
+        <div className="data-table">
+          <div className="data-row header four">
+            <span>Food</span>
+            <span>Route</span>
+            <span>Status</span>
+            <span>Action</span>
+          </div>
+          {deliveries.map((delivery) => (
+            <div className="data-row four" key={delivery.claimId}>
+              <span>
+                {delivery.listingTitle} ({delivery.portions})
+              </span>
+              <span>
+                {delivery.restaurant} → {delivery.shelter}
+              </span>
+              <span>{formatStatus(delivery.status)}</span>
+              <span>
+                {updatingClaimId === delivery.claimId ? "Updating..." : renderAction(delivery)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function formatStatus(status: string) {
   // "PICKED_UP" -> "Picked up"
   return status.charAt(0) + status.slice(1).toLowerCase().replace("_", " ");
 }
