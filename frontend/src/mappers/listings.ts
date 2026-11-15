@@ -1,18 +1,10 @@
-import type { FoodListing, ListingTag, Organization } from "../types/api";
+import type {
+  FoodListing,
+  ListingTag,
+  Organization,
+  PickupClaim,
+} from "../types/api";
 import type { Listing } from "../types/view";
-
-const fallbackRestaurants = [
-  "Green Harvest Co.",
-  "Pike St. Bakery",
-  "The Garden Table",
-  "Sakura Kitchen",
-];
-const fallbackRecipients = [
-  "Mission House Shelter",
-  "Northside Community Fridge",
-  "City Food Bank",
-  "Hope Kitchen",
-];
 
 function toNumber(value: number | string | null | undefined, fallback: number) {
   if (typeof value === "number") return value;
@@ -36,7 +28,7 @@ function formatPickupTime(endTime: string) {
 }
 
 function formatDate(value: string | null | undefined) {
-  if (!value) return "Not picked up yet";
+  if (!value) return "Not claimed yet";
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
@@ -49,18 +41,25 @@ export function mapFoodListingToViewListing(
   index: number,
   organizations: Organization[],
   tagsByListingId: Map<string, string[]>,
+  claimsByListingId: Map<string, PickupClaim>,
 ): Listing {
-  const donorOrganizations = organizations.filter(
-    (organization) => organization.organizationType === "DONOR",
+  // Look organizations up by their real IDs from the API.
+  const organizationsById = new Map(
+    organizations.map((organization) => [organization.organizationId, organization]),
   );
-  const donor =
-    donorOrganizations[index % Math.max(donorOrganizations.length, 1)];
+  const donor = listing.donorOrganizationId
+    ? organizationsById.get(listing.donorOrganizationId)
+    : undefined;
+  const claim = claimsByListingId.get(listing.listingId);
+  const recipient = claim
+    ? organizationsById.get(claim.recipientOrganizationId)
+    : undefined;
 
   return {
     id: listing.listingId,
     title: listing.title,
-    restaurant:
-      donor?.name ?? fallbackRestaurants[index % fallbackRestaurants.length],
+    restaurant: donor?.name ?? "Unknown donor",
+    donorOrganizationId: listing.donorOrganizationId ?? null,
     category: listing.category,
     portions: listing.quantityLabel,
     tags: tagsByListingId.get(listing.listingId) ?? [],
@@ -71,12 +70,24 @@ export function mapFoodListingToViewListing(
       x: toNumber(listing.mapPositionX, 20 + index * 16),
       y: toNumber(listing.mapPositionY, 34 + index * 7),
     },
-    pickedUpBy: fallbackRecipients[index % fallbackRecipients.length],
-    datePickedUp:
-      listing.status === "PICKED_UP"
-        ? formatDate(listing.updatedAt)
-        : "Not picked up yet",
+    status: listing.status,
+    claimedByOrganizationId: claim?.recipientOrganizationId ?? null,
+    pickedUpBy: recipient?.name ?? "",
+    datePickedUp: formatDate(claim?.claimedAt),
   };
+}
+
+// A listing can have several claims over time (e.g. one cancelled); keep the newest.
+export function latestClaimByListingId(claims: PickupClaim[]) {
+  const latest = new Map<string, PickupClaim>();
+  for (const claim of claims) {
+    if (claim.status === "CANCELLED") continue;
+    const existing = latest.get(claim.listingId);
+    if (!existing || claim.claimedAt > existing.claimedAt) {
+      latest.set(claim.listingId, claim);
+    }
+  }
+  return latest;
 }
 
 export function groupTagsByListingId(tags: ListingTag[]) {

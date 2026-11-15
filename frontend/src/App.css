@@ -1062,4 +1062,43 @@ button {
   .alert-options {
     grid-template-columns: 1fr;
   }
+
+  .acting-as {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8rem;
+    font-weight: 800;
+    color: #6b6760;
+  }
+
+  .acting-as select {
+    min-height: 40px;
+    padding: 0 10px;
+    border: 1px solid #cbc7bf;
+    border-radius: 999px;
+    color: #343230;
+    background: #eeece7;
+    font: inherit;
+    font-size: 0.9rem;
+  }
+
+  .status-badge {
+    margin-left: 6px;
+    color: #8a4b12;
+    background: #fbead6;
+  }
+
+  .claim-button:disabled {
+    cursor: default;
+    color: #8a8680;
+    background: #f0eee8;
+  }
+
+  .claim-error {
+    margin: 8px 0 0;
+    color: #b42318;
+    font-size: 0.85rem;
+    font-weight: 700;
+  }
 }

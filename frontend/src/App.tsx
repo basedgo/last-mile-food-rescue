@@ -1,28 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
-import { createFoodListingFromUi, getListingsForUi } from "./api/foodRescue";
-import "./App.css";
+import {
+  claimListingFromUi,
+  createFoodListingFromUi,
+  getListingsForUi,
+} from "./api/foodRescue";
+import { ApiError } from "./api/http";
+import type { Organization } from "./types/api";
+import type { Listing } from "./types/view";import "./App.css";
 
 type Role = "customer" | "company";
 type CustomerView = "listings" | "history" | "profile" | "inbox";
 type CompanyView = "dashboard" | "post" | "listings" | "profile" | "inbox";
 type Filter = "All" | "Meals" | "Bakery" | "Produce" | "Distance";
 type ApiStatus = "checking" | "connected" | "readError" | "writeError";
-
-type Listing = {
-  id: string;
-  title: string;
-  restaurant: string;
-  category: string;
-  portions: string;
-  tags: string[];
-  time: string;
-  timeTone: "urgent" | "soon" | "calm";
-  distance: string;
-  coordinates: { x: number; y: number };
-  pickedUpBy: string;
-  datePickedUp: string;
-};
 
 type Message = {
   id: number;
@@ -88,6 +79,25 @@ function App() {
   const [apiStatus, setApiStatus] = useState<ApiStatus>("checking");
   const [messages] = useState<Message[]>(initialMessages);
 
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [actingRecipientId, setActingRecipientId] = useState("");
+  const [actingDonorId, setActingDonorId] = useState("");
+  const [claimingListingId, setClaimingListingId] = useState<string | null>(null);
+  const [claimError, setClaimError] = useState("");
+
+  const recipientOrganizations = organizations.filter(
+    (organization) => organization.organizationType === "RECIPIENT",
+  );
+  const donorOrganizations = organizations.filter(
+    (organization) => organization.organizationType === "DONOR",
+  );
+  const actingRecipient = recipientOrganizations.find(
+    (organization) => organization.organizationId === actingRecipientId,
+  );
+  const actingDonor = donorOrganizations.find(
+    (organization) => organization.organizationId === actingDonorId,
+  );
+
   const activeView = role === "customer" ? customerView : companyView;
 
   useEffect(() => {
@@ -95,9 +105,20 @@ function App() {
 
     async function loadListings() {
       try {
-        const databaseListings = await getListingsForUi();
+        const { listings: databaseListings, organizations: databaseOrganizations } =
+          await getListingsForUi();
         if (isMounted) {
           setApiStatus("connected");
+          setOrganizations(databaseOrganizations);
+          // Default the dropdowns to the first shelter and first restaurant.
+          setActingRecipientId(
+            databaseOrganizations.find((o) => o.organizationType === "RECIPIENT")
+              ?.organizationId ?? "",
+          );
+          setActingDonorId(
+            databaseOrganizations.find((o) => o.organizationType === "DONOR")
+              ?.organizationId ?? "",
+          );
           setCompanyListings(databaseListings);
           setSelectedListing(
             (currentListing) =>
@@ -176,8 +197,13 @@ function App() {
     event.preventDefault();
     setPostingError("");
 
+    if (!actingDonor) {
+      setPostingError("Choose which restaurant you're posting as first.");
+      return;
+    }
+
     try {
-      const nextListing = await createFoodListingFromUi(postingTitle);
+      const nextListing = await createFoodListingFromUi(postingTitle, actingDonor);
       setApiStatus("connected");
       setCompanyListings((currentListings) => [nextListing, ...currentListings]);
       setSelectedListing(nextListing);
@@ -189,6 +215,30 @@ function App() {
       setPostingError(
         "Could not save this listing. The API is reachable, but the request failed.",
       );
+    }
+  }
+
+    async function handleClaim(listing: Listing) {
+    if (!actingRecipient) {
+      setClaimError("Choose which organization you're claiming for first.");
+      return;
+    }
+
+    setClaimError("");
+    setClaimingListingId(listing.id);
+    try {
+      const claimedListing = await claimListingFromUi(listing, actingRecipient);
+      setCompanyListings((currentListings) =>
+        currentListings.map((current) =>
+          current.id === claimedListing.id ? claimedListing : current,
+        ),
+      );
+      setSelectedListing(claimedListing);
+    } catch (error) {
+      console.error("Unable to claim listing.", error);
+      setClaimError(getErrorMessage(error, "Could not claim this listing."));
+    } finally {
+      setClaimingListingId(null);
     }
   }
 
@@ -289,17 +339,29 @@ function App() {
           >
             Company
           </button>
-          <button
-            className="profile-pill"
-            onClick={() =>
-              role === "company"
-                ? setCompanyView("profile")
-                : setCustomerView("profile")
-            }
-          >
-            <span>{role === "company" ? "GH" : "MT"}</span>
-            {role === "company" ? "Green Harvest" : "Marcus T."}
-          </button>
+          <label className="acting-as">
+            <span>Acting as</span>
+            <select
+              value={role === "company" ? actingDonorId : actingRecipientId}
+              onChange={(event) =>
+                role === "company"
+                  ? setActingDonorId(event.target.value)
+                  : setActingRecipientId(event.target.value)
+              }
+            >
+              {(role === "company"
+                ? donorOrganizations
+                : recipientOrganizations
+              ).map((organization) => (
+                <option
+                  key={organization.organizationId}
+                  value={organization.organizationId}
+                >
+                  {organization.name}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       </header>
 
@@ -359,10 +421,18 @@ function App() {
           selectedListing={selectedListing}
           onSelectListing={setSelectedListing}
           activeFilter={activeFilter}
+          onClaim={handleClaim}
+          claimingListingId={claimingListingId}
+          claimError={claimError}
         />
       )}
       {role === "customer" && activeView === "history" && (
-        <HistoryView listings={companyListings} />
+        <HistoryView
+          listings={companyListings.filter(
+            (listing) => listing.claimedByOrganizationId === actingRecipientId,
+          )}
+          organizationName={actingRecipient?.name ?? ""}
+        />
       )}
       {role === "customer" && activeView === "profile" && (
         <ProfileSetup role="customer" />
@@ -401,6 +471,18 @@ function App() {
   );
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof ApiError && error.details) {
+    try {
+      const body = JSON.parse(error.details) as { message?: string };
+      if (body.message) return body.message;
+    } catch {
+        // Response wasn't JSON; fall through to the generic message.
+    }
+  }
+  return fallback;
+}
+
 function getApiStatusLabel(apiStatus: ApiStatus) {
   if (apiStatus === "checking") return "Checking API";
   if (apiStatus === "connected") return "API connected";
@@ -414,12 +496,18 @@ function ListingsAndMap({
   onSelectListing,
   activeFilter,
   companyMode = false,
+  onClaim,
+  claimingListingId = null,
+  claimError = "",
 }: {
   listings: Listing[];
   selectedListing: Listing | null;
   onSelectListing: (listing: Listing) => void;
   activeFilter: Filter;
   companyMode?: boolean;
+  onClaim?: (listing: Listing) => void;
+  claimingListingId?: string | null;
+  claimError?: string;
 }) {
   const safeSelectedListing =
     listings.find((listing) => listing.id === selectedListing?.id) ??
@@ -455,6 +543,11 @@ function ListingsAndMap({
                 <div className="listing-card-top">
                   <div>
                     <span className="badge">{listing.category}</span>
+                      {listing.status !== "AVAILABLE" && (
+                      <span className="badge status-badge">
+                        {formatStatus(listing.status)}
+                      </span>
+                    )}
                     <h2>{listing.title}</h2>
                     <p>{listing.restaurant}</p>
                   </div>
@@ -469,8 +562,27 @@ function ListingsAndMap({
                   ))}
                   <span>{listing.distance}</span>
                 </div>
+
                 {safeSelectedListing.id === listing.id && !companyMode && (
-                  <button className="claim-button">Pickup</button>
+                  <>
+                    {listing.status === "AVAILABLE" ? (
+                      <button
+                        className="claim-button"
+                        disabled={claimingListingId === listing.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onClaim?.(listing);
+                        }}
+                      >
+                        {claimingListingId === listing.id ? "Claiming..." : "Pickup"}
+                      </button>
+                    ) : (
+                      <button className="claim-button" disabled>
+                        Claimed{listing.pickedUpBy ? ` by ${listing.pickedUpBy}` : ""}
+                      </button>
+                    )}
+                    {claimError && <p className="claim-error">{claimError}</p>}
+                  </>
                 )}
               </article>
             ))}
@@ -1059,33 +1171,50 @@ function Inbox({ role, messages }: { role: Role; messages: Message[] }) {
   );
 }
 
-function HistoryView({ listings }: { listings: Listing[] }) {
+function HistoryView({
+  listings,
+  organizationName,
+}: {
+  listings: Listing[];
+  organizationName: string;
+}) {
   return (
     <main className="dashboard-layout">
       <section className="table-card full">
         <div className="section-title">
-          <span>Customer history</span>
-          <h1>Completed pickups</h1>
+          <span>{organizationName || "Your organization"}</span>
+          <h1>Claimed pickups</h1>
         </div>
-        <div className="data-table">
-          <div className="data-row header four">
-            <span>Date</span>
-            <span>Restaurant</span>
-            <span>Food</span>
-            <span>Impact</span>
+        {listings.length === 0 ? (
+          <div className="empty-state">
+            No claims yet. Claim a listing from Nearby Listings and it will show up here.
           </div>
-          {listings.map((listing) => (
-            <div className="data-row four" key={listing.id}>
-              <span>{listing.datePickedUp}</span>
-              <span>{listing.restaurant}</span>
-              <span>{listing.title}</span>
-              <span>{listing.portions} delivered</span>
+        ) : (
+          <div className="data-table">
+            <div className="data-row header four">
+              <span>Date claimed</span>
+              <span>Restaurant</span>
+              <span>Food</span>
+              <span>Status</span>
             </div>
-          ))}
-        </div>
+            {listings.map((listing) => (
+              <div className="data-row four" key={listing.id}>
+                <span>{listing.datePickedUp}</span>
+                <span>{listing.restaurant}</span>
+                <span>{listing.title} ({listing.portions})</span>
+                <span>{formatStatus(listing.status)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </main>
   );
+}
+
+function formatStatus(status: Listing["status"]) {
+  // "PICKED_UP" -> "Picked up"
+  return status.charAt(0) + status.slice(1).toLowerCase().replace("_", " ");
 }
 
 function parseDistance(distance: string) {

@@ -43,6 +43,7 @@ export type AppUser = {
 
 export type FoodListing = {
   listingId: UUID
+  donorOrganizationId?: UUID | null
   title: string
   category: string
   description?: string | null
@@ -79,6 +80,8 @@ export type ListingTag = {
 
 export type PickupClaim = {
   claimId: UUID
+  listingId: UUID
+  recipientOrganizationId: UUID
   status: ClaimStatus
   claimedAt: ISODateTime
   pickedUpAt?: ISODateTime | null

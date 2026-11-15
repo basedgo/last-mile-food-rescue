@@ -1,11 +1,10 @@
-export type Role = 'volunteer' | 'company'
-export type VolunteerView = 'listings' | 'history'
-export type CompanyView = 'dashboard' | 'post' | 'listings'
+import type { ListingStatus } from './api'
 
 export type Listing = {
   id: string
   title: string
   restaurant: string
+  donorOrganizationId: string | null
   category: string
   portions: string
   tags: string[]
@@ -13,6 +12,8 @@ export type Listing = {
   timeTone: 'urgent' | 'soon' | 'calm'
   distance: string
   coordinates: { x: number; y: number }
+  status: ListingStatus
+  claimedByOrganizationId: string | null
   pickedUpBy: string
   datePickedUp: string
 }
