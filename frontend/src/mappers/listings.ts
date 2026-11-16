@@ -4,7 +4,7 @@ import type {
   Organization,
   PickupClaim,
 } from "../types/api";
-import type { Listing } from "../types/view";
+import type { LatLng, Listing } from "../types/view";
 
 function toNumber(value: number | string | null | undefined, fallback: number) {
   if (typeof value === "number") return value;
@@ -13,6 +13,15 @@ function toNumber(value: number | string | null | undefined, fallback: number) {
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+export function toLatLng(
+  latitude: number | string | null | undefined,
+  longitude: number | string | null | undefined,
+): LatLng | null {
+  const lat = toNumber(latitude, Number.NaN);
+  const lng = toNumber(longitude, Number.NaN);
+  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
 }
 
 function formatPickupTime(endTime: string) {
@@ -43,7 +52,6 @@ export function mapFoodListingToViewListing(
   tagsByListingId: Map<string, string[]>,
   claimsByListingId: Map<string, PickupClaim>,
 ): Listing {
-  // Look organizations up by their real IDs from the API.
   const organizationsById = new Map(
     organizations.map((organization) => [organization.organizationId, organization]),
   );
@@ -70,6 +78,9 @@ export function mapFoodListingToViewListing(
       x: toNumber(listing.mapPositionX, 20 + index * 16),
       y: toNumber(listing.mapPositionY, 34 + index * 7),
     },
+    location:
+      toLatLng(listing.latitude, listing.longitude) ??
+      toLatLng(donor?.latitude, donor?.longitude),
     status: listing.status,
     claimedByOrganizationId: claim?.recipientOrganizationId ?? null,
     pickedUpBy: recipient?.name ?? "",
@@ -77,7 +88,6 @@ export function mapFoodListingToViewListing(
   };
 }
 
-// A listing can have several claims over time (e.g. one cancelled); keep the newest.
 export function latestClaimByListingId(claims: PickupClaim[]) {
   const latest = new Map<string, PickupClaim>();
   for (const claim of claims) {
