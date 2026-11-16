@@ -49,6 +49,11 @@ elif [[ -n "${DATABASE_URL:-}" ]]; then
   )
 fi
 
+# Optional: subscribe an email address to SNS notifications.
+if [[ -n "${NOTIFICATION_EMAIL:-}" ]]; then
+  parameters+=("NotificationEmail=${NOTIFICATION_EMAIL}")
+fi
+
 sam build
 sam deploy \
   --stack-name "$STACK_NAME" \

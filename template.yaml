@@ -53,8 +53,14 @@ Parameters:
     Description: RDS allocated storage in GB when DeployDatabase is true.
     Default: 20
 
+  NotificationEmail:
+    Type: String
+    Description: Email address to subscribe to notifications (leave empty to skip).
+    Default: ""
+
 Conditions:
   CreateDatabase: !Equals [!Ref DeployDatabase, "true"]
+  HasNotificationEmail: !Not [!Equals [!Ref NotificationEmail, ""]]
 
 Globals:
   Function:
@@ -74,6 +80,7 @@ Globals:
         DATABASE_PASSWORD: !Ref DatabasePassword
         SPRING_PROFILES_ACTIVE: !Ref SpringProfilesActive
         APP_CORS_ALLOWED_ORIGIN: !Ref AllowedCorsOrigin
+        NOTIFICATIONS_TOPIC_ARN: !Ref NotificationsTopic
 
 Resources:
   FoodRescueApiGateway:
@@ -93,6 +100,10 @@ Resources:
     Properties:
       CodeUri: backend/
       Handler: com.app.LambdaHandler::handleRequest
+      # Least privilege: the Lambda may publish to this one topic and nothing else in SNS.
+      Policies:
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt NotificationsTopic.TopicName
       VpcConfig: !If
         - CreateDatabase
         - SecurityGroupIds:
@@ -114,6 +125,49 @@ Resources:
             RestApiId: !Ref FoodRescueApiGateway
             Path: /api/{proxy+}
             Method: ANY
+
+  # ---------- Notifications (SNS) ----------
+  # Pub/sub: the API publishes one message; SNS delivers it to every subscriber.
+  NotificationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Last Mile Food Rescue
+
+  NotificationsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasNotificationEmail
+    Properties:
+      TopicArn: !Ref NotificationsTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  # The Lambda runs in private subnets with no internet route, so it reaches SNS
+  # through a private VPC interface endpoint instead of the public internet.
+  SnsVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Condition: CreateDatabase
+    Properties:
+      VpcId: !Ref AppVpc
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.sns"
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref AppPrivateSubnetA
+        - !Ref AppPrivateSubnetB
+      SecurityGroupIds:
+        - !Ref VpcEndpointSecurityGroup
+
+  VpcEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateDatabase
+    Properties:
+      GroupDescription: HTTPS from the food rescue Lambda to AWS service endpoints.
+      VpcId: !Ref AppVpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
 
   AppVpc:
     Type: AWS::EC2::VPC
@@ -277,6 +331,9 @@ Outputs:
   ApiGatewayId:
     Description: API Gateway REST API ID.
     Value: !Ref FoodRescueApiGateway
+  NotificationsTopicArn:
+    Description: SNS topic for food rescue notifications.
+    Value: !Ref NotificationsTopic
   ApiBaseUrl:
     Description: Base URL for VITE_API_BASE_URL.
     Value: !Sub "https://${FoodRescueApiGateway}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${ApiStageName}/api"
