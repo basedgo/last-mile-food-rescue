@@ -1,5 +1,7 @@
 import type { ClaimStatus, ListingStatus } from './api'
 
+export type LatLng = { lat: number; lng: number }
+
 export type Listing = {
   id: string
   title: string
@@ -12,6 +14,7 @@ export type Listing = {
   timeTone: 'urgent' | 'soon' | 'calm'
   distance: string
   coordinates: { x: number; y: number }
+  location: LatLng | null
   status: ListingStatus
   claimedByOrganizationId: string | null
   pickedUpBy: string
@@ -26,4 +29,7 @@ export type Delivery = {
   shelter: string
   status: ClaimStatus
   volunteerUserId: string | null
+  volunteerName: string
+  restaurantLocation: LatLng | null
+  shelterLocation: LatLng | null
 }
