@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, FormEvent, ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
 import {
   claimListingFromUi,
   createFoodListingFromUi,
@@ -7,6 +7,7 @@ import {
 } from "./api/foodRescue";
 import { updateDelivery, type VolunteerAction } from "./api/endpoints";
 import { ApiError } from "./api/http";
+import { FoodRescueMap } from "./components/FoodRescueMap";
 import { mapClaimsToDeliveries } from "./mappers/deliveries";
 import type { AppUser, Organization, PickupClaim } from "./types/api";
 import type { Delivery, Listing } from "./types/view";import "./App.css";
@@ -86,7 +87,6 @@ function App() {
   const [actingDonorId, setActingDonorId] = useState("");
   const [claimingListingId, setClaimingListingId] = useState<string | null>(null);
   const [claimError, setClaimError] = useState("");
-  // Volunteer role
   const [claims, setClaims] = useState<PickupClaim[]>([]);
   const [volunteers, setVolunteers] = useState<AppUser[]>([]);
   const [actingVolunteerId, setActingVolunteerId] = useState("");
@@ -108,7 +108,12 @@ function App() {
 
   const activeView =
     role === "customer" ? customerView : role === "company" ? companyView : "deliveries";
-  const deliveries = mapClaimsToDeliveries(claims, companyListings, organizations);
+  const deliveries = mapClaimsToDeliveries(
+    claims,
+    companyListings,
+    organizations,
+    volunteers,
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -127,7 +132,6 @@ function App() {
           setClaims(databaseClaims);
           setVolunteers(databaseVolunteers);
           setActingVolunteerId(databaseVolunteers[0]?.userId ?? "");
-          // Default the dropdowns to the first shelter and first restaurant.
           setActingRecipientId(
             databaseOrganizations.find((o) => o.organizationType === "RECIPIENT")
               ?.organizationId ?? "",
@@ -268,13 +272,11 @@ function App() {
     setUpdatingClaimId(delivery.claimId);
     try {
       const updatedClaim = await updateDelivery(delivery.claimId, action, actingVolunteerId);
-      // Replace the old claim with the updated one from the server.
       setClaims((currentClaims) =>
         currentClaims.map((claim) =>
           claim.claimId === updatedClaim.claimId ? updatedClaim : claim,
         ),
       );
-      // Picking up the food also changes the listing's status on the server.
       if (action === "pickup") {
         setCompanyListings((currentListings) =>
           currentListings.map((listing) =>
@@ -375,65 +377,53 @@ function App() {
         </nav>
 
         <div className="right-nav">
-          <button
-            className={
-              role === "customer" ? "role-toggle active" : "role-toggle"
-            }
-            onClick={() => switchRole("customer")}
-          >
-            Customer
-          </button>
-          <button
-            className={
-              role === "company" ? "role-toggle active" : "role-toggle"
-            }
-            onClick={() => switchRole("company")}
-          >
-            Company
-          </button>
-          <button
-            className={
-              role === "volunteer" ? "role-toggle active" : "role-toggle"
-            }
-            onClick={() => switchRole("volunteer")}
-          >
-            Volunteer
-          </button>
+          {/* One picker for both role and identity. Each option's value is "role:id". */}
           <label className="acting-as">
             <span>Acting as</span>
-            {role === "volunteer" ? (
-              <select
-                value={actingVolunteerId}
-                onChange={(event) => setActingVolunteerId(event.target.value)}
-              >
-                {volunteers.map((volunteer) => (
-                  <option key={volunteer.userId} value={volunteer.userId}>
-                    {volunteer.fullName}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <select
-                value={role === "company" ? actingDonorId : actingRecipientId}
-                onChange={(event) =>
-                  role === "company"
-                    ? setActingDonorId(event.target.value)
-                    : setActingRecipientId(event.target.value)
-                }
-              >
-                {(role === "company"
-                  ? donorOrganizations
-                  : recipientOrganizations
-                ).map((organization) => (
+            <select
+              value={
+                role === "customer"
+                  ? `customer:${actingRecipientId}`
+                  : role === "company"
+                    ? `company:${actingDonorId}`
+                    : `volunteer:${actingVolunteerId}`
+              }
+              onChange={(event) => {
+                const [nextRole, id] = event.target.value.split(":") as [Role, string];
+                if (nextRole === "customer") setActingRecipientId(id);
+                if (nextRole === "company") setActingDonorId(id);
+                if (nextRole === "volunteer") setActingVolunteerId(id);
+                if (nextRole !== role) switchRole(nextRole);
+              }}
+            >
+              <optgroup label="Shelter (Customer)">
+                {recipientOrganizations.map((organization) => (
                   <option
                     key={organization.organizationId}
-                    value={organization.organizationId}
+                    value={`customer:${organization.organizationId}`}
                   >
                     {organization.name}
                   </option>
                 ))}
-              </select>
-            )}
+              </optgroup>
+              <optgroup label="Restaurant (Company)">
+                {donorOrganizations.map((organization) => (
+                  <option
+                    key={organization.organizationId}
+                    value={`company:${organization.organizationId}`}
+                  >
+                    {organization.name}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Volunteer">
+                {volunteers.map((volunteer) => (
+                  <option key={volunteer.userId} value={`volunteer:${volunteer.userId}`}>
+                    {volunteer.fullName}
+                  </option>
+                ))}
+              </optgroup>
+            </select>
           </label>
         </div>
       </header>
@@ -490,6 +480,8 @@ function App() {
 
       {role === "volunteer" && (
         <DeliveriesView
+          listings={companyListings}
+          shelters={recipientOrganizations}
           deliveries={deliveries}
           volunteerId={actingVolunteerId}
           updatingClaimId={updatingClaimId}
@@ -507,6 +499,8 @@ function App() {
           onClaim={handleClaim}
           claimingListingId={claimingListingId}
           claimError={claimError}
+          shelters={recipientOrganizations}
+          deliveries={deliveries}
         />
       )}
       {role === "customer" && activeView === "history" && (
@@ -542,6 +536,8 @@ function App() {
           onSelectListing={setSelectedListing}
           activeFilter={activeFilter}
           companyMode
+          shelters={recipientOrganizations}
+          deliveries={deliveries}
         />
       )}
       {role === "company" && activeView === "profile" && (
@@ -560,7 +556,7 @@ function getErrorMessage(error: unknown, fallback: string) {
       const body = JSON.parse(error.details) as { message?: string };
       if (body.message) return body.message;
     } catch {
-        // Response wasn't JSON; fall through to the generic message.
+      // Response wasn't JSON; fall through to the generic message.
     }
   }
   return fallback;
@@ -582,6 +578,8 @@ function ListingsAndMap({
   onClaim,
   claimingListingId = null,
   claimError = "",
+  shelters,
+  deliveries,
 }: {
   listings: Listing[];
   selectedListing: Listing | null;
@@ -591,6 +589,8 @@ function ListingsAndMap({
   onClaim?: (listing: Listing) => void;
   claimingListingId?: string | null;
   claimError?: string;
+  shelters: Organization[];
+  deliveries: Delivery[];
 }) {
   const safeSelectedListing =
     listings.find((listing) => listing.id === selectedListing?.id) ??
@@ -677,15 +677,26 @@ function ListingsAndMap({
         <aside className="right-panel">
           <div className="panel-header">
             <div>
-              <span className="badge">Amazon Location Service</span>
+              <span className="badge">Live map · Mapbox</span>
               <h1>{safeSelectedListing.restaurant}</h1>
               <p>{safeSelectedListing.title}</p>
             </div>
-            <button type="button">Get directions</button>
+            {safeSelectedListing.location && (
+              <a
+                className="directions-link"
+                href={`https:www.google.com/maps/dir/?api=1&destination=${safeSelectedListing.location.lat},${safeSelectedListing.location.lng}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Get directions
+              </a>
+            )}
           </div>
-          <MapPanel
-            selectedListing={safeSelectedListing}
+          <FoodRescueMap
             listings={listings}
+            shelters={shelters}
+            deliveries={deliveries}
+            selectedListingId={safeSelectedListing.id}
             onSelectListing={onSelectListing}
           />
           <div className="detail-strip">
@@ -729,124 +740,6 @@ function getMapDistance(
   end: { x: number; y: number },
 ) {
   return Math.hypot(end.x - start.x, end.y - start.y);
-}
-
-function MapPanel({
-  selectedListing,
-  listings,
-  onSelectListing,
-}: {
-  selectedListing: Listing;
-  listings: Listing[];
-  onSelectListing: (listing: Listing) => void;
-}) {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const [mapWidth, setMapWidth] = useState(0);
-  const userLocation = { x: 54, y: 78 };
-  const calloutWidth = 180;
-  const calloutGap = 14;
-  const calloutEdgePadding = 14;
-  const pinRadius = 27;
-  const selectedX = selectedListing.coordinates.x;
-  const leftSpace = (selectedX / 100) * mapWidth;
-  const rightSpace = ((100 - selectedX) / 100) * mapWidth;
-  const requiredCalloutSpace =
-    pinRadius + calloutGap + calloutWidth + calloutEdgePadding;
-  const rightFits = rightSpace >= requiredCalloutSpace;
-  const leftFits = leftSpace >= requiredCalloutSpace;
-  const placeCalloutLeft = rightFits
-    ? false
-    : leftFits
-      ? true
-      : leftSpace > rightSpace;
-  const routePath = buildRoutePath(userLocation, selectedListing.coordinates);
-  const calloutStyle = {
-    "--pin-x": `${selectedListing.coordinates.x}%`,
-    "--pin-y": `${selectedListing.coordinates.y}%`,
-    "--callout-width": `${calloutWidth}px`,
-    "--callout-gap": `${calloutGap}px`,
-    "--pin-radius": `${pinRadius}px`,
-    "--callout-edge-padding": `${calloutEdgePadding}px`,
-    top: `${Math.max(selectedListing.coordinates.y - 7, 6)}%`,
-  } as CSSProperties;
-
-  useEffect(() => {
-    const mapElement = mapRef.current;
-    if (!mapElement) return;
-
-    const updateMapWidth = () => setMapWidth(mapElement.clientWidth);
-    updateMapWidth();
-
-    const resizeObserver = new ResizeObserver(updateMapWidth);
-    resizeObserver.observe(mapElement);
-
-    return () => resizeObserver.disconnect();
-  }, []);
-
-  return (
-    <div className="map-panel" ref={mapRef}>
-      <svg
-        className="route-svg"
-        viewBox="0 0 100 100"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        <defs>
-          <marker
-            id="route-arrow"
-            markerHeight="5"
-            markerWidth="5"
-            orient="auto"
-            refX="4"
-            refY="2.5"
-            viewBox="0 0 5 5"
-          >
-            <path d="M0 0 L5 2.5 L0 5 Z" className="route-arrowhead" />
-          </marker>
-        </defs>
-        <path d={routePath} />
-      </svg>
-      {listings.map((listing) => (
-        <button
-          className={`map-pin ${selectedListing.id === listing.id ? "active" : ""}`}
-          key={listing.id}
-          onClick={() => onSelectListing(listing)}
-          style={{
-            left: `${listing.coordinates.x}%`,
-            top: `${listing.coordinates.y}%`,
-          }}
-          aria-label={`Select ${listing.title}`}
-        >
-          {listing.title.slice(0, 1)}
-        </button>
-      ))}
-      <div
-        className={`map-callout ${placeCalloutLeft ? "left" : ""}`}
-        style={calloutStyle}
-      >
-        <strong>{selectedListing.restaurant}</strong>
-        <span>Closes in {selectedListing.time}</span>
-      </div>
-      <div className="you-are-here">
-        <span />
-        You're here
-      </div>
-    </div>
-  );
-}
-
-function buildRoutePath(
-  start: { x: number; y: number },
-  end: { x: number; y: number },
-) {
-  const midpointY = start.y - Math.max(10, Math.abs(start.y - end.y) / 2);
-
-  return [
-    `M${start.x} ${start.y}`,
-    `V${midpointY}`,
-    `H${end.x}`,
-    `V${end.y}`,
-  ].join(" ");
 }
 
 function CompanyDashboard({ listings }: { listings: Listing[] }) {
@@ -1296,23 +1189,25 @@ function HistoryView({
 }
 
 function DeliveriesView({
+  listings,
+  shelters,
   deliveries,
   volunteerId,
   updatingClaimId,
   error,
   onAction,
 }: {
+  listings: Listing[];
+  shelters: Organization[];
   deliveries: Delivery[];
   volunteerId: string;
   updatingClaimId: string | null;
   error: string;
   onAction: (delivery: Delivery, action: VolunteerAction) => void;
 }) {
-  // Claimed by a shelter but no driver yet.
   const openDeliveries = deliveries.filter(
     (delivery) => delivery.status === "CLAIMED" && !delivery.volunteerUserId,
   );
-  // Assigned to the volunteer you're acting as.
   const myDeliveries = deliveries.filter(
     (delivery) => delivery.volunteerUserId === volunteerId,
   );
@@ -1320,6 +1215,19 @@ function DeliveriesView({
   return (
     <main className="dashboard-layout">
       {error && <p className="claim-error">{error}</p>}
+      <section className="table-card full">
+        <div className="section-title">
+          <span>Live map</span>
+          <h1>Volunteer routes</h1>
+        </div>
+        {/* Your routes are drawn thicker than other volunteers' routes. */}
+        <FoodRescueMap
+          listings={listings}
+          shelters={shelters}
+          deliveries={deliveries}
+          highlightVolunteerId={volunteerId}
+        />
+      </section>
       <DeliveryTable
         eyebrow="Needs a driver"
         title="Open deliveries"
@@ -1408,7 +1316,6 @@ function DeliveryTable({
 }
 
 function formatStatus(status: string) {
-  // "PICKED_UP" -> "Picked up"
   return status.charAt(0) + status.slice(1).toLowerCase().replace("_", " ");
 }
 
