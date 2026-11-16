@@ -4,10 +4,12 @@ import com.app.models.AppUsers;
 import com.app.models.FoodListings;
 import com.app.models.Organization;
 import com.app.models.PickupClaims;
+import com.app.notifications.NotificationEvent;
 import com.app.repositories.AppUsersRepository;
 import com.app.repositories.FoodListingsRepository;
 import com.app.repositories.OrganizationRepository;
 import com.app.repositories.PickupClaimsRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,15 +28,18 @@ public class PickupClaimsServices {
     private final FoodListingsRepository foodListingsRepository;
     private final OrganizationRepository organizationRepository;
     private final AppUsersRepository appUsersRepository;
+    private final ApplicationEventPublisher events;
 
     public PickupClaimsServices(PickupClaimsRepository repository,
             FoodListingsRepository foodListingsRepository,
             OrganizationRepository organizationRepository,
-            AppUsersRepository appUsersRepository) {
+            AppUsersRepository appUsersRepository,
+            ApplicationEventPublisher events) {
         this.repository = repository;
         this.foodListingsRepository = foodListingsRepository;
         this.organizationRepository = organizationRepository;
         this.appUsersRepository = appUsersRepository;
+        this.events = events;
     }
 
     @Transactional
@@ -63,8 +68,14 @@ public class PickupClaimsServices {
         claim.setListing(listing);
         claim.setRecipientOrganization(recipient);
         listing.setStatus("CLAIMED");
+        PickupClaims saved = repository.save(claim);
 
-        return repository.save(claim);
+        events.publishEvent(new NotificationEvent(
+                "LISTING_CLAIMED",
+                "Food claimed: " + listing.getTitle(),
+                recipient.getName() + " claimed " + listing.getTitle() + " from "
+                        + listing.getDonorOrganization().getName() + ". A volunteer can now accept the delivery."));
+        return saved;
     }
 
     @Transactional
@@ -77,6 +88,9 @@ public class PickupClaimsServices {
         }
 
         claim.setVolunteerUser(volunteer);
+
+        events.publishEvent(deliveryEvent("DELIVERY_ACCEPTED", "Volunteer assigned", claim,
+                volunteer.getFullName() + " will deliver"));
         return claim;
     }
 
@@ -92,6 +106,9 @@ public class PickupClaimsServices {
         claim.setStatus("IN_TRANSIT");
         claim.setPickedUpAt(OffsetDateTime.now());
         claim.getListing().setStatus("PICKED_UP");
+
+        events.publishEvent(deliveryEvent("DELIVERY_PICKED_UP", "Food on the way", claim,
+                claim.getVolunteerUser().getFullName() + " picked up"));
         return claim;
     }
 
@@ -106,7 +123,18 @@ public class PickupClaimsServices {
 
         claim.setStatus("DELIVERED");
         claim.setDeliveredAt(OffsetDateTime.now());
+
+        events.publishEvent(deliveryEvent("DELIVERY_COMPLETED", "Food delivered", claim,
+                claim.getVolunteerUser().getFullName() + " delivered"));
         return claim;
+    }
+
+    // e.g. "Priya Patel picked up Pasta (48 portions) from Green Harvest Co. for Mission House Shelter."
+    private NotificationEvent deliveryEvent(String eventType, String subjectPrefix, PickupClaims claim, String action) {
+        FoodListings listing = claim.getListing();
+        String message = action + " " + listing.getTitle() + " (" + listing.getQuantityLabel() + ") from "
+                + listing.getDonorOrganization().getName() + " for " + claim.getRecipientOrganization().getName() + ".";
+        return new NotificationEvent(eventType, subjectPrefix + ": " + listing.getTitle(), message);
     }
 
     private PickupClaims lockClaim(UUID claimId) {
